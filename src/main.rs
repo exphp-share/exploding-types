@@ -7,22 +7,26 @@ pub struct Element {
 
 type ParseResult<'a, Output> = Result<(&'a str, Output), &'a str>;
 
-trait Parser<'a, Output> {
-    fn parse(&self, input: &'a str) -> ParseResult<'a, Output>;
+trait Parser<'a> {
+    type Output;
+
+    fn parse(&self, input: &'a str) -> ParseResult<'a, Self::Output>;
 }
 
-impl<'a, F, Output> Parser<'a, Output> for F
+impl<'a, F, Output> Parser<'a> for F
 where
     F: Fn(&'a str) -> ParseResult<Output>,
 {
+    type Output = Output;
+
     fn parse(&self, input: &'a str) -> ParseResult<'a, Output> {
         self(input)
     }
 }
 
-fn map<'a, P, F, A, B>(parser: P, map_fn: F) -> impl Parser<'a, B>
+fn map<'a, P, F, A, B>(parser: P, map_fn: F) -> impl Parser<'a, Output=B>
 where
-    P: Parser<'a, A>,
+    P: Parser<'a, Output=A>,
     F: Fn(A) -> B,
 {
     move |input|
@@ -30,10 +34,10 @@ where
             .map(|(next_input, result)| (next_input, map_fn(result)))
 }
 
-fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, (R1, R2)>
+fn pair<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, Output=(R1, R2)>
 where
-    P1: Parser<'a, R1>,
-    P2: Parser<'a, R2>,
+    P1: Parser<'a, Output=R1>,
+    P2: Parser<'a, Output=R2>,
 {
     move |input| {
         parser1.parse(input).and_then(|(next_input, result1)| {
@@ -43,18 +47,18 @@ where
     }
 }
 
-fn left<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, R1>
+fn left<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, Output=R1>
 where
-    P1: Parser<'a, R1>,
-    P2: Parser<'a, R2>,
+    P1: Parser<'a, Output=R1>,
+    P2: Parser<'a, Output=R2>,
 {
     map(pair(parser1, parser2), |(left, _right)| left)
 }
 
-fn right<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, R2>
+fn right<'a, P1, P2, R1, R2>(parser1: P1, parser2: P2) -> impl Parser<'a, Output=R2>
 where
-    P1: Parser<'a, R1>,
-    P2: Parser<'a, R2>,
+    P1: Parser<'a, Output=R1>,
+    P2: Parser<'a, Output=R2>,
 {
     map(pair(parser1, parser2), |(_left, right)| right)
 }
@@ -80,7 +84,7 @@ fn identifier(input: &str) -> ParseResult<String> {
     Ok((&input[next_index..], matched))
 }
 
-fn match_literal<'a>(expected: &'static str) -> impl Parser<'a, ()> {
+fn match_literal<'a>(expected: &'static str) -> impl Parser<'a, Output=()> {
     move |input: &'a str| match input.get(0..expected.len()) {
         Some(next) if next == expected => Ok((&input[expected.len()..], ())),
         _ => Err(input),
@@ -88,9 +92,9 @@ fn match_literal<'a>(expected: &'static str) -> impl Parser<'a, ()> {
 }
 
 
-fn one_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
+fn one_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Output=Vec<A>>
 where
-    P: Parser<'a, A>,
+    P: Parser<'a, Output=A>,
 {
     move |mut input| {
         let mut result = Vec::new();
@@ -111,9 +115,9 @@ where
     }
 }
 
-fn zero_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Vec<A>>
+fn zero_or_more<'a, P, A>(parser: P) -> impl Parser<'a, Output=Vec<A>>
 where
-    P: Parser<'a, A>,
+    P: Parser<'a, Output=A>,
 {
     move |mut input| {
         let mut result = Vec::new();
@@ -134,9 +138,9 @@ fn any_char(input: &str) -> ParseResult<char> {
     }
 }
 
-fn pred<'a, P, A, F>(parser: P, predicate: F) -> impl Parser<'a, A>
+fn pred<'a, P, A, F>(parser: P, predicate: F) -> impl Parser<'a, Output=A>
 where
-    P: Parser<'a, A>,
+    P: Parser<'a, Output=A>,
     F: Fn(&A) -> bool,
 {
     move |input| {
@@ -149,19 +153,19 @@ where
     }
 }
 
-fn whitespace_char<'a>() -> impl Parser<'a, char> {
+fn whitespace_char<'a>() -> impl Parser<'a, Output=char> {
     pred(any_char, |c| c.is_whitespace())
 }
 
-fn space1<'a>() -> impl Parser<'a, Vec<char>> {
+fn space1<'a>() -> impl Parser<'a, Output=Vec<char>> {
     one_or_more(whitespace_char())
 }
 
-fn space0<'a>() -> impl Parser<'a, Vec<char>> {
+fn space0<'a>() -> impl Parser<'a, Output=Vec<char>> {
     zero_or_more(whitespace_char())
 }
 
-fn quoted_string<'a>() -> impl Parser<'a, String> {
+fn quoted_string<'a>() -> impl Parser<'a, Output=String> {
     map(
         right(
             match_literal("\""),
@@ -174,19 +178,19 @@ fn quoted_string<'a>() -> impl Parser<'a, String> {
     )
 }
 
-fn attribute_pair<'a>() -> impl Parser<'a, (String, String)> {
+fn attribute_pair<'a>() -> impl Parser<'a, Output=(String, String)> {
     pair(identifier, right(match_literal("="), quoted_string()))
 }
 
-fn attributes<'a>() -> impl Parser<'a, Vec<(String, String)>> {
+fn attributes<'a>() -> impl Parser<'a, Output=Vec<(String, String)>> {
     zero_or_more(right(space1(), attribute_pair()))
 }
 
-fn element_start<'a>() -> impl Parser<'a, (String, Vec<(String, String)>)> {
+fn element_start<'a>() -> impl Parser<'a, Output=(String, Vec<(String, String)>)> {
     right(match_literal("<"), pair(identifier, attributes()))
 }
 
-pub fn single_element<'a>() -> impl Parser<'a, Element> {
+pub fn single_element<'a>() -> impl Parser<'a, Output=Element> {
     map(
         left(element_start(), match_literal("/>")),
         |(name, attributes)| Element {
